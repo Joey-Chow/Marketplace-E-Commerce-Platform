@@ -11,12 +11,24 @@ const CartSummary = ({ cart, loading, selectedItems = [], getCartSummary }) => {
 
   // Get selected items for checkout
   const getSelectedItemsForCheckout = () => {
-    return cart.items
+    console.log("Cart items:", cart.items);
+    console.log("Selected items:", selectedItems);
+
+    const filteredItems = cart.items
       .filter((item) => {
         const productId = item.product?._id || item.product;
+        console.log(
+          "Checking product ID:",
+          productId,
+          "in selectedItems:",
+          selectedItems.includes(productId)
+        );
         return selectedItems.includes(productId);
       })
       .map((item) => item.product?._id || item.product);
+
+    console.log("Filtered items for checkout:", filteredItems);
+    return filteredItems;
   };
 
   const handleCheckout = () => {
@@ -28,6 +40,19 @@ const CartSummary = ({ cart, loading, selectedItems = [], getCartSummary }) => {
 
     try {
       const selectedItemsForCheckout = getSelectedItemsForCheckout();
+
+      // Validate that we have selected items
+      if (!selectedItemsForCheckout || selectedItemsForCheckout.length === 0) {
+        alert("❌ Please select items to checkout");
+        setCheckoutLoading(false);
+        return;
+      }
+
+      console.log("Sending checkout request with:", {
+        selectedItems: selectedItemsForCheckout,
+        paymentMethod,
+        shippingAddress,
+      });
 
       const response = await fetch("/api/checkout", {
         method: "POST",
@@ -143,10 +168,18 @@ const CartSummary = ({ cart, loading, selectedItems = [], getCartSummary }) => {
           "button",
           {
             onClick: handleCheckout,
-            disabled: loading || cart.items.length === 0 || checkoutLoading,
+            disabled:
+              loading ||
+              cart.items.length === 0 ||
+              selectedItems.length === 0 ||
+              checkoutLoading,
             className: "btn btn-primary checkout-btn",
           },
-          checkoutLoading ? "Processing..." : "Proceed to Checkout"
+          checkoutLoading
+            ? "Processing..."
+            : selectedItems.length === 0
+            ? "Select items to checkout"
+            : "Proceed to Checkout"
         )
       )
     ),

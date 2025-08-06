@@ -20,6 +20,16 @@ const CartPage = () => {
     loadCart();
   }, [loadCart]);
 
+  // Get selected items from cart - moved before early return to maintain hook order
+  const selectedItems = React.useMemo(() => {
+    if (!cart || !cart.items) return [];
+    return cart.items
+      .filter((item) => item.isSelected === true)
+      .map((item) => item.product?._id || item.product);
+  }, [cart]);
+
+  console.log("CartPage selectedItems:", selectedItems); // Debug log
+
   // empty cart check
   if (!cart || !cart.items || cart.items.length === 0) {
     return React.createElement(
@@ -90,6 +100,7 @@ const CartPage = () => {
         React.createElement(window.CartSummary, {
           cart: cart,
           loading: loading,
+          selectedItems: selectedItems,
         })
       )
     )

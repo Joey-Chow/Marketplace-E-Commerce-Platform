@@ -1,7 +1,15 @@
 # Marketplace - E-Commerce Platform
 
+### Products Overview
+
 ![Products Overview](intro_images/products.png)
+
+### Products Details
+
 ![products overview](intro_images/product.png)
+
+### My Cart
+
 ![Products Overview](intro_images/cart.png)
 
 ## Quick Start
@@ -97,10 +105,11 @@ It also includes MongoDB database setup.
    - Dashboard: http://localhost:3000/dashboard.html
 
 ## DEliverable for assignment:
- 1, Project Description is in docs/'Project_Description.md'
- 2, All task based documentations are in docs/'Report.PDF'
 
- Note: For our own convenience and future reference, we have sepratedly add the task-based documentations in corresponding file. Specifically:
- all the documentations navigations can be found in docs/'Report.md',
+1, Project Description is in docs/'Project_Description.md'
+2, All task based documentations are in docs/'Report.PDF'
 
- The description of this project architecture is in docs/'architeure.md'.
+Note: For our own convenience and future reference, we have sepratedly add the task-based documentations in corresponding file. Specifically:
+all the documentations navigations can be found in docs/'Report.md',
+
+The description of this project architecture is in docs/'architeure.md'.

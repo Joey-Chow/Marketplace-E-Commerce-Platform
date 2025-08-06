@@ -3,8 +3,7 @@ const mongoose = require("mongoose");
 const connectDB = async () => {
   try {
     const uri =
-      process.env.MONGODB_URI ||
-      "mongodb://127.0.0.1:27017/marketplace?replicaSet=rs0";
+      process.env.MONGODB_URI || "mongodb://127.0.0.1:27017/marketplace";
     console.log("🔗 Attempting to connect to MongoDB with URI:", uri);
 
     const conn = await mongoose.connect(uri, {

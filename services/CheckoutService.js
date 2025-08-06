@@ -8,7 +8,23 @@ const logger = require("../utils/logger");
 
 class CheckoutService {
   /**
-   * Process checkout with ACID transactions (for replica set MongoDB)
+   * Check if MongoDB is running in replica set mode
+   * @returns {Promise<boolean>} - True if replica set is available
+   */
+  async _isReplicaSetAvailable() {
+    try {
+      const admin = mongoose.connection.db.admin();
+      const result = await admin.command({ replSetGetStatus: 1 });
+      return true;
+    } catch (error) {
+      // If replSetGetStatus fails, we're in standalone mode
+      return false;
+    }
+  }
+
+  /**
+   * Process checkout with optional ACID transactions (for replica set MongoDB)
+   * Falls back to non-transactional mode for standalone MongoDB
    * @param {string} userId - User ID
    * @param {Array} selectedItems - Array of selected product IDs
    * @param {string} paymentMethod - Payment method chosen
@@ -23,24 +39,40 @@ class CheckoutService {
   ) {
     const maxRetries = 3;
     let retryCount = 0;
+
+    // Check if we can use transactions
+    const useTransactions = await this._isReplicaSetAvailable();
+    logger.info(
+      `Checkout mode: ${
+        useTransactions
+          ? "Transactional (Replica Set)"
+          : "Non-transactional (Standalone)"
+      }`
+    );
+
     while (retryCount < maxRetries) {
-      /*
-       * ACID transaction implementation
-       */
-      const session = await mongoose.startSession(); // ACID keyword
-      session.startTransaction({
-        readConcern: { level: "snapshot" },
-        writeConcern: { w: "majority" },
-      });
+      let session = null;
+
+      if (useTransactions) {
+        /*
+         * ACID transaction implementation for replica set
+         */
+        session = await mongoose.startSession();
+        session.startTransaction({
+          readConcern: { level: "snapshot" },
+          writeConcern: { w: "majority" },
+        });
+      }
 
       try {
         logger.info(
-          `Starting checkout transaction for user: ${userId} (attempt ${
-            retryCount + 1
-          })`,
+          `Starting checkout ${
+            useTransactions ? "transaction" : "process"
+          } for user: ${userId} (attempt ${retryCount + 1})`,
           {
             selectedItems,
             paymentMethod,
+            transactional: useTransactions,
           }
         );
 
@@ -68,26 +100,39 @@ class CheckoutService {
           throw new Error(`Payment failed: ${result.paymentResult.error}`);
         }
 
-        // All conditions met - commit the transaction
-        await session.commitTransaction();
+        // All conditions met - commit the transaction if using transactions
+        if (useTransactions && session) {
+          await session.commitTransaction();
+        }
 
-        logger.info(`Checkout transaction completed successfully`, {
-          orderId: result.order._id,
-          paymentId: result.paymentResult.paymentId,
-          attempt: retryCount + 1,
-        });
+        logger.info(
+          `Checkout ${
+            useTransactions ? "transaction" : "process"
+          } completed successfully`,
+          {
+            orderId: result.order._id,
+            paymentId: result.paymentResult.paymentId,
+            attempt: retryCount + 1,
+            transactional: useTransactions,
+          }
+        );
 
         return result;
       } catch (error) {
-        // Abort the transaction on any error
-        await session.abortTransaction();
+        // Abort the transaction on any error if using transactions
+        if (useTransactions && session) {
+          await session.abortTransaction();
+        }
 
         logger.error(
-          `Checkout transaction failed (attempt ${retryCount + 1})`,
+          `Checkout ${
+            useTransactions ? "transaction" : "process"
+          } failed (attempt ${retryCount + 1})`,
           {
             error: error.message,
             userId,
             selectedItems,
+            transactional: useTransactions,
           }
         );
 
@@ -95,7 +140,9 @@ class CheckoutService {
         if (this._isRetryableError(error) && retryCount < maxRetries - 1) {
           retryCount++;
           logger.info(
-            `Retrying checkout transaction (attempt ${retryCount + 1})`
+            `Retrying checkout ${
+              useTransactions ? "transaction" : "process"
+            } (attempt ${retryCount + 1})`
           );
           await new Promise((resolve) => setTimeout(resolve, 100 * retryCount)); // Exponential backoff
           continue;
@@ -103,8 +150,10 @@ class CheckoutService {
 
         throw error;
       } finally {
-        // End the session
-        session.endSession();
+        // Always end the session if using transactions
+        if (useTransactions && session) {
+          await session.endSession();
+        }
       }
     }
   }
@@ -113,9 +162,10 @@ class CheckoutService {
    * 1. Read or check preconditions
    * @private
    */
-  async _checkPreconditions(userId, selectedItems, session) {
+  async _checkPreconditions(userId, selectedItems, session = null) {
     // Get user's cart and validate selected items
-    const userCart = await Cart.findOne({ user: userId }).session(session);
+    const query = Cart.findOne({ user: userId });
+    const userCart = await (session ? query.session(session) : query);
     if (!userCart || !userCart.items.length) {
       throw new Error("Cart is empty");
     }
@@ -135,7 +185,10 @@ class CheckoutService {
     const productUpdates = [];
 
     for (const cartItem of selectedCartItems) {
-      const product = await Product.findById(cartItem.product).session(session);
+      const productQuery = Product.findById(cartItem.product);
+      const product = await (session
+        ? productQuery.session(session)
+        : productQuery);
 
       if (!product) {
         throw new Error(`Product ${cartItem.product} not found`);
@@ -198,14 +251,15 @@ class CheckoutService {
    * 2. Update stock
    * @private
    */
-  async _updateStock(productUpdates, session) {
+  async _updateStock(productUpdates, session = null) {
     for (const update of productUpdates) {
+      const updateOptions = session ? { session } : {};
       await Product.findByIdAndUpdate(
         update.productId,
         {
           $set: { "inventory.quantity": update.newStock },
         },
-        { session }
+        updateOptions
       );
     }
 
@@ -221,7 +275,7 @@ class CheckoutService {
     preconditions,
     paymentMethod,
     shippingAddress,
-    session
+    session = null
   ) {
     const { orderItems, pricing, selectedItems } = preconditions;
 
@@ -279,7 +333,8 @@ class CheckoutService {
     };
 
     const order = new Order(orderData);
-    await order.save({ session });
+    const saveOptions = session ? { session } : {};
+    await order.save(saveOptions);
 
     logger.info(`Order created successfully`, {
       orderId: order._id,
@@ -287,6 +342,7 @@ class CheckoutService {
     });
 
     // Remove only selected items from cart
+    const updateOptions = session ? { session } : {};
     await Cart.findOneAndUpdate(
       { user: userId },
       {
@@ -298,7 +354,7 @@ class CheckoutService {
           },
         },
       },
-      { session }
+      updateOptions
     );
 
     logger.info(`Selected items removed from cart`, {
